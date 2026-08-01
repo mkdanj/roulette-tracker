@@ -1,2 +1,2 @@
-# roulette-tracker
+# Roulette-Tracker
 Roulette croupier performance tracker
