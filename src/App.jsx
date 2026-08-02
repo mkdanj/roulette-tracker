@@ -39,7 +39,14 @@ export default function RouletteTrackerProduction() {
         .eq('session_id', sessionId)
         .order('spin_order', { ascending: true });
       if (error) throw error;
-      return data || [];
+      // Map DB column names (start_number/landing_number) to the shape
+      // used everywhere else in the UI (start/landing)
+      return (data || []).map((s) => ({
+        start: s.start_number,
+        direction: s.direction,
+        landing: s.landing_number,
+        timestamp: s.created_at,
+      }));
     } catch (error) {
       console.error('Error loading spins:', error);
       return [];
