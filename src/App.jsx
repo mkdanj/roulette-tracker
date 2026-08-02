@@ -30,6 +30,31 @@ export default function RouletteTrackerProduction() {
       console.error('Error loading sessions:', error);
     }
   };
+  // Load spins for a session
+  const loadSpinsForSession = async (sessionId) => {
+    try {
+      const { data, error } = await supabase
+        .from('spins')
+        .select('*')
+        .eq('session_id', sessionId)
+        .order('spin_order', { ascending: true });
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error('Error loading spins:', error);
+      return [];
+    }
+  };
+  // Get unique table names from sessions
+  const getUniqueTableNames = () => {
+    const names = [...new Set(sessions.map(s => s.table_name))];
+    return names.filter(n => n).sort();
+  };
+  // Get unique croupier names from sessions
+  const getUniqueCroupierNames = () => {
+    const names = [...new Set(sessions.map(s => s.croupier_name))];
+    return names.filter(n => n).sort();
+  };
   const handleCreateSession = async () => {
     if (!tableName || !croupierName) {
       alert('Fill Table Name and Croupier Name!');
@@ -56,6 +81,48 @@ export default function RouletteTrackerProduction() {
       loadSessions();
     } catch (error) {
       alert('Error creating session: ' + error.message);
+    }
+  };
+  // Resume a session
+  const handleResumeSession = async (session) => {
+    try {
+      const sessionSpins = await loadSpinsForSession(session.session_id);
+
+      // Set current session back to active
+      await supabase
+        .from('sessions')
+        .update({ status: 'active' })
+        .eq('session_id', session.session_id);
+      setCurrentSession(session);
+      setSpins(sessionSpins);
+      updateHistory(sessionSpins);
+      setScreen('tracker');
+      loadSessions();
+    } catch (error) {
+      alert('Error resuming session: ' + error.message);
+    }
+  };
+  // Delete a session
+  const handleDeleteSession = async (sessionId) => {
+    if (!window.confirm('Are you sure you want to delete this session? This cannot be undone!')) {
+      return;
+    }
+    try {
+      // Delete spins first
+      await supabase
+        .from('spins')
+        .delete()
+        .eq('session_id', sessionId);
+      // Delete session
+      const { error } = await supabase
+        .from('sessions')
+        .delete()
+        .eq('session_id', sessionId);
+      if (error) throw error;
+      loadSessions();
+      alert('Session deleted successfully');
+    } catch (error) {
+      alert('Error deleting session: ' + error.message);
     }
   };
   const handleRecordSpin = async () => {
@@ -156,6 +223,9 @@ export default function RouletteTrackerProduction() {
     return history[startNumber] || null;
   };
   const landingHist = getLandingHistory();
+  const uniqueTableNames = getUniqueTableNames();
+  const uniqueCroupierNames = getUniqueCroupierNames();
+  // ============ LOBBY SCREEN ============
   if (screen === 'lobby') {
     return (
       <div style={styles.container}>
@@ -180,6 +250,7 @@ export default function RouletteTrackerProduction() {
       </div>
     );
   }
+  // ============ SESSION FORM SCREEN ============
   if (screen === 'sessionForm') {
     return (
       <div style={styles.container}>
@@ -187,6 +258,20 @@ export default function RouletteTrackerProduction() {
           <h1 style={styles.title}>📝 New Session</h1>
           <div style={styles.formGroup}>
             <label>Table Name:</label>
+            {uniqueTableNames.length > 0 ? (
+              <select
+                value={tableName}
+                onChange={(e) => setTableName(e.target.value)}
+                style={styles.select}
+              >
+                <option value="">-- Select or type new --</option>
+                {uniqueTableNames.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            ) : null}
             <input
               type="text"
               placeholder="e.g. Green, Red, Table 7"
@@ -197,6 +282,20 @@ export default function RouletteTrackerProduction() {
           </div>
           <div style={styles.formGroup}>
             <label>Croupier Name:</label>
+            {uniqueCroupierNames.length > 0 ? (
+              <select
+                value={croupierName}
+                onChange={(e) => setCroupierName(e.target.value)}
+                style={styles.select}
+              >
+                <option value="">-- Select or type new --</option>
+                {uniqueCroupierNames.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            ) : null}
             <input
               type="text"
               placeholder="e.g. Ilmar, Maria, James"
@@ -220,6 +319,7 @@ export default function RouletteTrackerProduction() {
       </div>
     );
   }
+  // ============ TRACKER SCREEN ============
   if (screen === 'tracker' && currentSession) {
     return (
       <div style={styles.container}>
@@ -376,6 +476,7 @@ export default function RouletteTrackerProduction() {
       </div>
     );
   }
+  // ============ DASHBOARD SCREEN ============
   if (screen === 'dashboard') {
     return (
       <div style={styles.container}>
@@ -420,6 +521,22 @@ export default function RouletteTrackerProduction() {
                         {new Date(session.end_time).toLocaleString()}
                       </p>
                     )}
+                  </div>
+                  <div style={styles.sessionCardActions}>
+                    {session.status === 'completed' && (
+                      <button
+                        onClick={() => handleResumeSession(session)}
+                        style={styles.btnResume}
+                      >
+                        ▶ Resume
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDeleteSession(session.session_id)}
+                      style={styles.btnDelete}
+                    >
+                      🗑 Delete
+                    </button>
                   </div>
                 </div>
               ))}
@@ -551,6 +668,18 @@ const styles = {
     fontSize: '14px',
     boxSizing: 'border-box',
   },
+  select: {
+    width: '100%',
+    padding: '12px',
+    marginTop: '8px',
+    marginBottom: '8px',
+    backgroundColor: '#0f1e3d',
+    border: '2px solid #00ffff',
+    color: '#fff',
+    borderRadius: '6px',
+    fontSize: '14px',
+    boxSizing: 'border-box',
+  },
   directionButtons: {
     display: 'flex',
     gap: '10px',
@@ -621,6 +750,25 @@ const styles = {
     borderRadius: '6px',
     cursor: 'pointer',
     fontSize: '14px',
+  },
+  btnResume: {
+    padding: '8px 16px',
+    backgroundColor: '#00ff88',
+    color: '#000',
+    border: 'none',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '12px',
+    fontWeight: 'bold',
+  },
+  btnDelete: {
+    padding: '8px 16px',
+    backgroundColor: '#ff6644',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '12px',
   },
   sectionTitle: {
     fontSize: '18px',
@@ -753,6 +901,12 @@ const styles = {
     fontSize: '13px',
     color: '#aaa',
     lineHeight: '1.6',
+    marginBottom: '15px',
+  },
+  sessionCardActions: {
+    display: 'flex',
+    gap: '10px',
+    justifyContent: 'flex-end',
   },
   dashboardStats: {
     backgroundColor: '#0f1e3d',
