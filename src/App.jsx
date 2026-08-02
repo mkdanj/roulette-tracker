@@ -94,22 +94,26 @@ export default function RouletteTrackerProduction() {
     } catch (error) {
       console.error('Error saving spin:', error);
     }
-    setStartNumber('');
+    // Auto-fill next spin: landing number becomes start number
+    setStartNumber(spin.landing.toString());
+    // Auto-alternate direction
+    setDirection(direction === 'CW' ? 'ACW' : 'CW');
+    // Clear landing number for next entry
     setLandingNumber('');
-    setDirection('CW');
   };
+  // Update history - GROUP BY STARTING NUMBER (not landing)
   const updateHistory = (updatedSpins) => {
     const newHistory = {};
     updatedSpins.forEach((s) => {
-      const key = `${s.landing}`;
+      const key = `${s.start}`; // Group by STARTING number
       if (!newHistory[key]) {
         newHistory[key] = { CW: {}, ACW: {} };
       }
-      const startKey = `${s.start}`;
-      if (!newHistory[key][s.direction][startKey]) {
-        newHistory[key][s.direction][startKey] = 0;
+      const landingKey = `${s.landing}`; // Store LANDING numbers (where it led)
+      if (!newHistory[key][s.direction][landingKey]) {
+        newHistory[key][s.direction][landingKey] = 0;
       }
-      newHistory[key][s.direction][startKey]++;
+      newHistory[key][s.direction][landingKey]++;
     });
     setHistory(newHistory);
   };
@@ -148,8 +152,8 @@ export default function RouletteTrackerProduction() {
     }
   };
   const getLandingHistory = () => {
-    if (!landingNumber) return null;
-    return history[landingNumber] || null;
+    if (!startNumber) return null;
+    return history[startNumber] || null;
   };
   const landingHist = getLandingHistory();
   if (screen === 'lobby') {
@@ -304,11 +308,11 @@ export default function RouletteTrackerProduction() {
           {landingHist && (
             <div style={styles.historySection}>
               <h2 style={styles.sectionTitle}>
-                History: Number {landingNumber} as Starting Point
+                History: Number {startNumber} as Starting Point
               </h2>
               {Object.keys(landingHist.CW).length > 0 && (
                 <div style={styles.historyBox}>
-                  <h3 style={styles.historyTitle}>↻ From {landingNumber} CW:</h3>
+                  <h3 style={styles.historyTitle}>↻ From {startNumber} CW:</h3>
                   <div style={styles.historyList}>
                     {Object.entries(landingHist.CW)
                       .sort((a, b) => b[1] - a[1])
@@ -323,7 +327,7 @@ export default function RouletteTrackerProduction() {
               {Object.keys(landingHist.ACW).length > 0 && (
                 <div style={styles.historyBox}>
                   <h3 style={styles.historyTitle}>
-                    ↷ From {landingNumber} ACW:
+                    ↷ From {startNumber} ACW:
                   </h3>
                   <div style={styles.historyList}>
                     {Object.entries(landingHist.ACW)
@@ -338,29 +342,33 @@ export default function RouletteTrackerProduction() {
               )}
             </div>
           )}
+          {/* Spins Log - Latest at Top */}
           {spins.length > 0 && (
             <div style={styles.spinsSection}>
               <h2 style={styles.sectionTitle}>Recorded Spins ({spins.length})</h2>
               <div style={styles.spinsList}>
-                {spins.map((spin, idx) => (
-                  <div
-                    key={idx}
-                    style={{
-                      ...styles.spinItem,
-                      ...(editingIndex === idx ? styles.spinEditing : {}),
-                    }}
-                  >
-                    <span style={styles.spinText}>
-                      {idx + 1}. {spin.start} {spin.direction} → {spin.landing}
-                    </span>
-                    <button
-                      onClick={() => handleEdit(idx)}
-                      style={styles.btnSmall}
+                {[...spins].reverse().map((spin, revIdx) => {
+                  const idx = spins.length - 1 - revIdx;
+                  return (
+                    <div
+                      key={idx}
+                      style={{
+                        ...styles.spinItem,
+                        ...(editingIndex === idx ? styles.spinEditing : {}),
+                      }}
                     >
-                      ✎ Edit
-                    </button>
-                  </div>
-                ))}
+                      <span style={styles.spinText}>
+                        {idx + 1}. {spin.start} {spin.direction} → {spin.landing}
+                      </span>
+                      <button
+                        onClick={() => handleEdit(idx)}
+                        style={styles.btnSmall}
+                      >
+                        ✎ Edit
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
