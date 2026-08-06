@@ -15,9 +15,34 @@ export default function RouletteTrackerProduction() {
   const [direction, setDirection] = useState('CW');
   const [landingNumber, setLandingNumber] = useState('');
   const [editingIndex, setEditingIndex] = useState(null);
+  // Live bias detection: entry-screen alert state
+  const [lastSpinId, setLastSpinId] = useState(null);
+  const [alertData, setAlertData] = useState(null);
+  const [alertVisible, setAlertVisible] = useState(false);
+  // Live bias detection: dashboard state
+  const [biasTables, setBiasTables] = useState([]);
+  const [biasCroupiers, setBiasCroupiers] = useState([]);
+  const [biasSelectedTable, setBiasSelectedTable] = useState('');
+  const [biasSelectedCroupier, setBiasSelectedCroupier] = useState('');
+  const [biasRunning, setBiasRunning] = useState(false);
+  const [biasPairs, setBiasPairs] = useState([]);
+  const [biasLoading, setBiasLoading] = useState(false);
+  const [expandedPairId, setExpandedPairId] = useState(null);
+  const [pairDetails, setPairDetails] = useState([]);
+  const [pairDetailsLoading, setPairDetailsLoading] = useState(false);
   useEffect(() => {
     loadSessions();
   }, []);
+  // Poll for bias pairs while running
+  useEffect(() => {
+    if (!biasRunning) return undefined;
+    fetchBiasPairs();
+    const interval = setInterval(() => {
+      fetchBiasPairs();
+    }, 3000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [biasRunning, biasSelectedTable, biasSelectedCroupier]);
   const loadSessions = async () => {
     try {
       const { data, error } = await supabase
@@ -82,6 +107,9 @@ export default function RouletteTrackerProduction() {
       setCurrentSession(newSession);
       setSpins([]);
       setHistory({});
+      setLastSpinId(null);
+      setAlertData(null);
+      setAlertVisible(false);
       setScreen('tracker');
       setTableName('');
       setCroupierName('');
@@ -103,6 +131,9 @@ export default function RouletteTrackerProduction() {
       setCurrentSession(session);
       setSpins(sessionSpins);
       updateHistory(sessionSpins);
+      setLastSpinId(null);
+      setAlertData(null);
+      setAlertVisible(false);
       setScreen('tracker');
       loadSessions();
     } catch (error) {
@@ -130,6 +161,23 @@ export default function RouletteTrackerProduction() {
       alert('Session deleted successfully');
     } catch (error) {
       alert('Error deleting session: ' + error.message);
+    }
+  };
+  // Check the live-bias entry-screen alert after a spin is saved
+  const checkEntryScreenAlert = async (sessionId) => {
+    try {
+      const { data, error } = await supabase.rpc('check_entry_screen_alert', {
+        p_session_id: sessionId,
+      });
+      if (!error && data && data.length > 0 && data[0].should_alert) {
+        setAlertData(data[0]);
+        setAlertVisible(true);
+        setTimeout(() => setAlertVisible(false), 5000);
+      } else {
+        setAlertVisible(false);
+      }
+    } catch (err) {
+      console.error('Alert check error:', err);
     }
   };
   const handleRecordSpin = async () => {
@@ -163,8 +211,15 @@ export default function RouletteTrackerProduction() {
         landing_number: spin.landing,
         spin_order: updatedSpins.length,
       };
-      const { error } = await supabase.from('spins').insert(spinData);
+      const { data: insertedRows, error } = await supabase
+        .from('spins')
+        .insert(spinData)
+        .select();
       if (error) throw error;
+      const newSpinId = insertedRows && insertedRows[0] ? insertedRows[0].id : null;
+      setLastSpinId(newSpinId);
+      // Check for a live-bias alert on this session
+      checkEntryScreenAlert(currentSession.session_id);
     } catch (error) {
       console.error('Error saving spin:', error);
     }
@@ -219,6 +274,8 @@ export default function RouletteTrackerProduction() {
       setCurrentSession(null);
       setSpins([]);
       setHistory({});
+      setAlertVisible(false);
+      setAlertData(null);
       setScreen('dashboard');
       loadSessions();
     } catch (error) {
@@ -228,6 +285,79 @@ export default function RouletteTrackerProduction() {
   const getLandingHistory = () => {
     if (!startNumber) return null;
     return history[startNumber] || null;
+  };
+  // ============ LIVE BIAS DASHBOARD HELPERS ============
+  const loadBiasOptions = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('sessions')
+        .select('table_name, croupier_name')
+        .limit(200);
+      if (!error && data) {
+        const uniqueTables = [...new Set(data.map((s) => s.table_name))].filter(Boolean).sort();
+        const uniqueCroupiers = [...new Set(data.map((s) => s.croupier_name))].filter(Boolean).sort();
+        setBiasTables(uniqueTables);
+        setBiasCroupiers(uniqueCroupiers);
+        if (uniqueTables.length > 0 && !biasSelectedTable) setBiasSelectedTable(uniqueTables[0]);
+        if (uniqueCroupiers.length > 0 && !biasSelectedCroupier) setBiasSelectedCroupier(uniqueCroupiers[0]);
+      }
+    } catch (err) {
+      console.error('Error loading bias options:', err);
+    }
+  };
+  const fetchBiasPairs = async () => {
+    if (!biasSelectedTable || !biasSelectedCroupier) return;
+    setBiasLoading(true);
+    try {
+      const { data, error } = await supabase.rpc('get_dashboard_pairs', {
+        p_croupier_name: biasSelectedCroupier,
+        p_table_name: biasSelectedTable,
+      });
+      if (!error && data) {
+        setBiasPairs(data);
+      }
+    } catch (err) {
+      console.error('Error fetching bias pairs:', err);
+    }
+    setBiasLoading(false);
+  };
+  const handleStartBiasTracking = async () => {
+    if (!biasSelectedTable || !biasSelectedCroupier) {
+      alert('Please select table and croupier');
+      return;
+    }
+    setBiasRunning(true);
+  };
+  const handleStopBiasTracking = () => {
+    setBiasRunning(false);
+    setBiasPairs([]);
+    setExpandedPairId(null);
+    setPairDetails([]);
+  };
+  const handleExpandPair = async (pair) => {
+    const key = `${pair.pair_id}`;
+    if (expandedPairId === key) {
+      setExpandedPairId(null);
+      setPairDetails([]);
+      return;
+    }
+    setExpandedPairId(key);
+    setPairDetailsLoading(true);
+    try {
+      const { data, error } = await supabase.rpc('get_pair_details', {
+        p_from_number: pair.from_number,
+        p_direction: pair.direction,
+        p_to_number: pair.to_number,
+        p_croupier_name: biasSelectedCroupier,
+        p_table_name: biasSelectedTable,
+      });
+      if (!error && data) {
+        setPairDetails(data);
+      }
+    } catch (err) {
+      console.error('Error fetching pair details:', err);
+    }
+    setPairDetailsLoading(false);
   };
   const landingHist = getLandingHistory();
   const uniqueTableNames = getUniqueTableNames();
@@ -251,6 +381,15 @@ export default function RouletteTrackerProduction() {
               style={styles.btnSecondary}
             >
               📊 View Dashboard
+            </button>
+            <button
+              onClick={() => {
+                loadBiasOptions();
+                setScreen('biasDashboard');
+              }}
+              style={styles.btnSecondary}
+            >
+              📈 Live Bias Dashboard
             </button>
           </div>
         </div>
@@ -344,6 +483,17 @@ export default function RouletteTrackerProduction() {
               ⏹ End Session
             </button>
           </div>
+          {alertVisible && alertData && (
+            <div style={styles.alertBanner}>
+              <span style={styles.alertText}>⚠ {alertData.message}</span>
+              <button
+                onClick={() => setAlertVisible(false)}
+                style={styles.alertClose}
+              >
+                ✕
+              </button>
+            </div>
+          )}
           <div style={styles.inputSection}>
             <h2 style={styles.sectionTitle}>Enter Spin Data</h2>
             <div style={styles.inputGrid}>
@@ -574,6 +724,142 @@ export default function RouletteTrackerProduction() {
               </strong>
             </div>
           </div>
+        </div>
+      </div>
+    );
+  }
+  // ============ LIVE BIAS DASHBOARD SCREEN ============
+  if (screen === 'biasDashboard') {
+    return (
+      <div style={styles.container}>
+        <div style={styles.dashboardBox}>
+          <div style={styles.dashboardHeader}>
+            <h1 style={styles.title}>📈 Live Bias Dashboard</h1>
+            <button
+              onClick={() => {
+                handleStopBiasTracking();
+                setScreen('lobby');
+              }}
+              style={styles.btnClose}
+            >
+              ← Back to Lobby
+            </button>
+          </div>
+          <div style={styles.inputSection}>
+            <div style={styles.inputGrid}>
+              <div style={styles.inputGroup}>
+                <label>Table:</label>
+                <select
+                  value={biasSelectedTable}
+                  onChange={(e) => setBiasSelectedTable(e.target.value)}
+                  disabled={biasRunning}
+                  style={styles.select}
+                >
+                  <option value="">-- Select table --</option>
+                  {biasTables.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div style={styles.inputGroup}>
+                <label>Croupier:</label>
+                <select
+                  value={biasSelectedCroupier}
+                  onChange={(e) => setBiasSelectedCroupier(e.target.value)}
+                  disabled={biasRunning}
+                  style={styles.select}
+                >
+                  <option value="">-- Select croupier --</option>
+                  {biasCroupiers.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div style={styles.buttonGroup}>
+              {biasRunning ? (
+                <button onClick={handleStopBiasTracking} style={styles.btnDanger}>
+                  ⏹ Stop Tracking
+                </button>
+              ) : (
+                <button
+                  onClick={handleStartBiasTracking}
+                  disabled={biasLoading}
+                  style={styles.btnPrimary}
+                >
+                  ▶ Run Analysis
+                </button>
+              )}
+            </div>
+          </div>
+          {biasRunning && (
+            <div style={styles.spinsSection}>
+              <h2 style={styles.sectionTitle}>
+                Frequent Pairs (Frequency ≥ 5)
+              </h2>
+              {biasPairs.length > 0 ? (
+                <div style={styles.spinsList}>
+                  {biasPairs.map((pair) => {
+                    const key = `${pair.pair_id}`;
+                    const isExpanded = expandedPairId === key;
+                    return (
+                      <div key={key} style={styles.pairCard}>
+                        <div
+                          onClick={() => handleExpandPair(pair)}
+                          style={styles.pairCardHeader}
+                        >
+                          <span style={styles.pairDisplay}>
+                            {pair.from_number} {pair.direction} {pair.to_number}
+                          </span>
+                          <span style={styles.pairFrequency}>
+                            {pair.frequency}x
+                          </span>
+                          <span style={styles.pairChevron}>
+                            {isExpanded ? '▲' : '▼'}
+                          </span>
+                        </div>
+                        {isExpanded && (
+                          <div style={styles.pairDetailsBox}>
+                            {pairDetailsLoading ? (
+                              <div style={styles.noData}>Loading details...</div>
+                            ) : pairDetails.length > 0 ? (
+                              pairDetails.map((d, i) => (
+                                <div key={i} style={styles.pairDetailRow}>
+                                  <span>
+                                    📝 {String(d.session_id).slice(0, 16)}...
+                                  </span>
+                                  <span>
+                                    ⏱️{' '}
+                                    {new Date(d.occurrence_time).toLocaleString()}
+                                  </span>
+                                </div>
+                              ))
+                            ) : (
+                              <div style={styles.noData}>No details found</div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p style={styles.noData}>
+                  No frequent pairs found yet for this croupier/table.
+                </p>
+              )}
+            </div>
+          )}
+          {!biasRunning && (
+            <p style={styles.noData}>
+              Select a table and croupier, then click "Run Analysis" to monitor
+              live.
+            </p>
+          )}
         </div>
       </div>
     );
@@ -942,6 +1228,72 @@ const styles = {
   label: {
     fontSize: '14px',
     fontWeight: 'bold',
+    color: '#aaa',
+  },
+  alertBanner: {
+    background: '#ff6b35',
+    color: '#fff',
+    padding: '12px 16px',
+    borderRadius: '6px',
+    marginBottom: '20px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    fontSize: '14px',
+    fontWeight: '500',
+  },
+  alertText: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  },
+  alertClose: {
+    background: 'none',
+    border: 'none',
+    color: '#fff',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: 'bold',
+    padding: '0 0 0 12px',
+  },
+  pairCard: {
+    background: '#1a2a4e',
+    borderRadius: '6px',
+    overflow: 'hidden',
+    border: '1px solid #444',
+  },
+  pairCardHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '12px 16px',
+    cursor: 'pointer',
+    gap: '12px',
+  },
+  pairDisplay: {
+    fontSize: '14px',
+    fontWeight: 'bold',
+    color: '#00ffff',
+    flex: 1,
+  },
+  pairFrequency: {
+    fontSize: '14px',
+    fontWeight: 'bold',
+    color: '#00ff88',
+  },
+  pairChevron: {
+    color: '#888',
+  },
+  pairDetailsBox: {
+    borderTop: '1px solid #444',
+    padding: '10px 16px',
+  },
+  pairDetailRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    padding: '8px 0',
+    borderBottom: '1px solid #222',
+    fontSize: '12px',
     color: '#aaa',
   },
 };
