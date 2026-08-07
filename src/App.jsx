@@ -172,7 +172,6 @@ export default function RouletteTrackerProduction() {
       if (!error && data && data.length > 0 && data[0].should_alert) {
         setAlertData(data[0]);
         setAlertVisible(true);
-        setTimeout(() => setAlertVisible(false), 5000);
       } else {
         setAlertVisible(false);
       }
@@ -220,6 +219,8 @@ export default function RouletteTrackerProduction() {
       setLastSpinId(newSpinId);
       // Check for a live-bias alert on this session
       checkEntryScreenAlert(currentSession.session_id);
+      // Clear landing number only after a successful save
+      setLandingNumber('');
     } catch (error) {
       console.error('Error saving spin:', error);
     }
@@ -227,8 +228,6 @@ export default function RouletteTrackerProduction() {
     setStartNumber(spin.landing.toString());
     // Auto-alternate direction
     setDirection(direction === 'CW' ? 'ACW' : 'CW');
-    // Clear landing number for next entry
-    setLandingNumber('');
   };
   // Update history - GROUP BY STARTING NUMBER (not landing)
   const updateHistory = (updatedSpins) => {
