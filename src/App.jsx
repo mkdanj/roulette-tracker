@@ -16,7 +16,7 @@ export default function RouletteTrackerProduction() {
   const [landingNumber, setLandingNumber] = useState('');
   const [editingIndex, setEditingIndex] = useState(null);
   // Live bias detection: entry-screen alert state
-  const [lastSpinId, setLastSpinId] = useState(null);
+  const [, setLastSpinId] = useState(null);
   const [alertData, setAlertData] = useState(null);
   const [alertVisible, setAlertVisible] = useState(false);
   // Live bias detection: dashboard state
